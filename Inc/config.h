@@ -9,7 +9,7 @@
 #define DELAY_IN_MAIN_LOOP 2        // in ms. default 5. it is independent of all the timing critical stuff. do not touch if you do not know what you are doing.
 
 #define TIMEOUT          5          // number of wrong / missing input commands before emergency off
-
+#define uart2_timeout	50 //uart message errors before going in timeout
 // ############################### GENERAL ###############################
 
 // How to calibrate: connect GND and RX of a 3.3v uart-usb adapter to the right sensor board cable (be careful not to use the red wire of the cable. 15v will destroye verything.). if you are using nunchuck, disable it temporarily. enable DEBUG_SERIAL_USART3 and DEBUG_SERIAL_ASCII use asearial terminal.

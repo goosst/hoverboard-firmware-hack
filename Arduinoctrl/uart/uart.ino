@@ -1,9 +1,16 @@
-char inData[128]; // Allocate some space for the string
-char inChar = -1; // Where to store the character read
-int16_t debugdata[12];
+/* initial date: 2 august 2018
+   author: goosst
+   sketch for arduino due (3.3V based uart)
+   uart2 from hoverboard is connected to serial 1 from the due
+   uart3 from hoverboard is connected to serial 2
+*/
+
 
 int16_t speed;
+int16_t steer;
 int16_t speedchange;
+uint8_t cntr_uart2;
+uint8_t checksum_uart2;
 
 // uart 3 information:
 int16_t volt_bat;
@@ -12,6 +19,8 @@ int16_t speed_right;
 int16_t checksum;
 int16_t checksum_calc;
 uint8_t cntr_uart3; uint8_t cntr_uart3_prev; uint8_t debnce_uart3_ticks;
+char inChar = -1;
+int16_t debugdata[12];
 
 void setup() {
   // put your setup code here, to run once:
@@ -48,10 +57,19 @@ void loop() {
   //Serial.println(speedchange);
 
 
-  int16_t steer = 0;
+  steer = 0;
 
+  // uart2 commands + checks
   Serial1.write((uint8_t *) &steer, sizeof(steer));
   Serial1.write((uint8_t *) &speed, sizeof(speed));
+  Serial1.write((uint8_t *) &cntr_uart2, sizeof(cntr_uart2));
+
+  checksum_uart2 = steer + speed + cntr_uart2;
+  Serial1.write((uint8_t *) &checksum_uart2, sizeof(checksum_uart2));
+
+  Serial.print("counter uart2:");
+  Serial.println(cntr_uart2, DEC);
+  cntr_uart2++;
 
   //  Serial.println(Serial2.available());
 
@@ -64,7 +82,7 @@ void loop() {
     //search for start of new string
 
     bool start_new_message = false;
-    while (start_new_message == false)
+    while (start_new_message == false && Serial2.available() > 0)
     {
       inChar = Serial2.read();
       if (inChar == '\n')
@@ -75,11 +93,13 @@ void loop() {
     }
 
     int16_t index = 0;
-    while (start_new_message && index < 12)
+    while (start_new_message && index < 12 && Serial2.available() > 0)
     {
+
       inChar = Serial2.peek();
       if (inChar == '\n')
       {
+
         start_new_message = false;
         //        Serial.println("message ended");
         //        for (int i = 0; i < 12; i++)
@@ -107,12 +127,12 @@ void loop() {
         Serial.print("speed_right ");
         Serial.println(speed_right, DEC);
 
-//        Serial.print("checksum ");
-//        Serial.println(checksum, DEC);
-//        Serial.println(checksum_calc, DEC);
+        //        Serial.print("checksum ");
+        //        Serial.println(checksum, DEC);
+        //        Serial.println(checksum_calc, DEC);
 
-//        Serial.print("counter ");
-//        Serial.println(cntr_uart3, DEC);
+        //        Serial.print("counter ");
+        //        Serial.println(cntr_uart3, DEC);
 
         if (checksum == checksum_calc)
         {
@@ -142,7 +162,7 @@ void loop() {
       }
     }
 
-    //clear buffer to stop program from just reading serial data
+    //clear buffer to stop program from just reading serial data, data is sent quicker than arduino can handle
     //    if (index >= 12)
     //    {
     while (Serial2.available() > 0) {
@@ -153,7 +173,7 @@ void loop() {
     //    }
 
   }
-  delay(2);
+  delay(10);
 }
 
 

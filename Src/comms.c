@@ -41,8 +41,8 @@ void consoleScope() {
     uart_buf[0] = ch_buf[2];
     uart_buf[1] = ch_buf[3];
     uart_buf[2] = ch_buf[5];
-    uart_buf[3]= uart_buf[0]+uart_buf[1]+uart_buf[2]; //simple CRC
-    uart_buf[4] = '\n' | (ch_buf[0] << 8);
+    uart_buf[3]= uart_buf[0]+uart_buf[1]+uart_buf[2]; //simple checksum
+    uart_buf[4] = '\n' | (ch_buf[0] << 8); //end buffer + counter
 
     if(UART_DMA_CHANNEL->CNDTR == 0) {
       UART_DMA_CHANNEL->CCR &= ~DMA_CCR_EN;

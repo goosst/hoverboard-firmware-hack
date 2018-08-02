@@ -41,12 +41,15 @@ int cmd2;
 int cmd3;
 
 uint16_t buff_cntr=0;
+uint16_t fubar=0;
 
 typedef struct{
    int16_t steer;
    int16_t speed;
-   //uint32_t crc;
+   uint8_t uart_cntr;
+   uint8_t checksum_uart2;
 } Serialcommand;
+uint8_t cntr_prev_uart2=0;
 
 volatile Serialcommand command;
 
@@ -152,10 +155,8 @@ int main(void) {
 
   #ifdef CONTROL_SERIAL_USART2
     UART_Control_Init();
-    HAL_UART_Receive_DMA(&huart2, (uint8_t *)&command, 4);
-
-//    int fubar=199;
-//    HAL_UART_Transmit_DMA(&huart2, (uint8_t)fubar, strlen(fubar));
+//    HAL_UART_Receive_DMA(&huart2, (uint8_t *)&command, 4);
+    HAL_UART_Receive_DMA(&huart2, (uint8_t *)&command, 6);
   #endif
 
   #ifdef DEBUG_I2C_LCD
@@ -217,10 +218,28 @@ int main(void) {
     #endif
 
     #ifdef CONTROL_SERIAL_USART2
+
       cmd1 = CLAMP((int16_t)command.steer, -1000, 1000);
       cmd2 = CLAMP((int16_t)command.speed, -1000, 1000);
-
       timeout = 0;
+
+      // check correctness of values and if uart is not hanging
+	  uint8_t checksum_uart2=command.steer+command.speed+command.uart_cntr;
+	  if(command.checksum_uart2==checksum_uart2 && command.uart_cntr!=cntr_prev_uart2)
+	  {
+		  fubar = 0;
+	  }
+	  else
+	  {
+		  fubar++;
+	  }
+	  cntr_prev_uart2=command.uart_cntr;
+
+	  if(fubar>uart2_timeout)
+	  {
+		  timeout=TIMEOUT;
+	  }
+
     #endif
 
 
@@ -274,9 +293,14 @@ int main(void) {
       setScopeChannel(6, (int)board_temp_adc_filtered);  // 7: for board temperature calibration
       setScopeChannel(7, (int)board_temp_deg_c);  // 8: for verifying board temperature calibration
 
+      setScopeChannel(5, (int)fubar);
+      setScopeChannel(2, (int)command.steer);
+      setScopeChannel(3, (int)command.speed);
+
       setScopeChannel(0,buff_cntr);
       buff_cntr++;
-      if(buff_cntr>254){
+      if(buff_cntr>254)
+      {
     	  buff_cntr=0;
       }
 
