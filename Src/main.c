@@ -40,6 +40,8 @@ int cmd1;  // normalized input values. -1000 to 1000
 int cmd2;
 int cmd3;
 
+uint16_t buff_cntr=0;
+
 typedef struct{
    int16_t steer;
    int16_t speed;
@@ -151,6 +153,9 @@ int main(void) {
   #ifdef CONTROL_SERIAL_USART2
     UART_Control_Init();
     HAL_UART_Receive_DMA(&huart2, (uint8_t *)&command, 4);
+
+//    int fubar=199;
+//    HAL_UART_Transmit_DMA(&huart2, (uint8_t)fubar, strlen(fubar));
   #endif
 
   #ifdef DEBUG_I2C_LCD
@@ -268,6 +273,13 @@ int main(void) {
       setScopeChannel(5, (int)(batteryVoltage * 100.0f));  // 6: for verifying battery voltage calibration
       setScopeChannel(6, (int)board_temp_adc_filtered);  // 7: for board temperature calibration
       setScopeChannel(7, (int)board_temp_deg_c);  // 8: for verifying board temperature calibration
+
+      setScopeChannel(0,buff_cntr);
+      buff_cntr++;
+      if(buff_cntr>254){
+    	  buff_cntr=0;
+      }
+
       consoleScope();
     }
 
