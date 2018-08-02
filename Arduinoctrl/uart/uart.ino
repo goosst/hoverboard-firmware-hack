@@ -1,18 +1,25 @@
 /* initial date: 2 august 2018
    author: goosst
-   sketch for arduino due (3.3V based uart)
+   sketch for arduino due (3.3V based uart etc.)
+   
    uart2 from hoverboard is connected to serial 1 from the due
    uart3 from hoverboard is connected to serial 2
+   2 aug 18: added distance measurement with VL53L0X sensor
 */
 
+#include <Wire.h>
+#include <VL53L0X.h>
+VL53L0X sensor;
+uint16_t distance1_mm;
 
+//uart2
 int16_t speed;
 int16_t steer;
 int16_t speedchange;
 uint8_t cntr_uart2;
 uint8_t checksum_uart2;
 
-// uart 3 information:
+// uart3 information:
 int16_t volt_bat;
 int16_t speed_left;
 int16_t speed_right;
@@ -21,6 +28,9 @@ int16_t checksum_calc;
 uint8_t cntr_uart3; uint8_t cntr_uart3_prev; uint8_t debnce_uart3_ticks;
 char inChar = -1;
 int16_t debugdata[12];
+
+
+
 
 void setup() {
   // put your setup code here, to run once:
@@ -36,13 +46,21 @@ void setup() {
   }
   Serial.print("buffer cleared");
 
+  //vl53 settings
+  Wire.begin();
+  sensor.init();
+  sensor.setTimeout(500);
+  //  sensor.setSignalRateLimit(0.25);
+  // increase laser pulse periods (defaults are 14 and 10 PCLKs)
+  sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodPreRange, 18);
+  sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodFinalRange, 14);
+
+  sensor.setMeasurementTimingBudget(20000); //measuring time us
 }
 
 void loop() {
 
-
-
-  // put your main code here, to run repeatedly:
+  // some profile commanding speed and steer
   if (speedchange < 300) {
     speed = 150;
   }
@@ -55,24 +73,23 @@ void loop() {
     speedchange = 0;
   }
   //Serial.println(speedchange);
-
-
   steer = 0;
+
+
 
   // uart2 commands + checks
   Serial1.write((uint8_t *) &steer, sizeof(steer));
   Serial1.write((uint8_t *) &speed, sizeof(speed));
   Serial1.write((uint8_t *) &cntr_uart2, sizeof(cntr_uart2));
-
   checksum_uart2 = steer + speed + cntr_uart2;
   Serial1.write((uint8_t *) &checksum_uart2, sizeof(checksum_uart2));
-
-  Serial.print("counter uart2:");
-  Serial.println(cntr_uart2, DEC);
+  //  Serial.print("counter uart2:");
+  //  Serial.println(cntr_uart2, DEC);
   cntr_uart2++;
 
-  //  Serial.println(Serial2.available());
 
+
+  // uart3 reading and conversion
   Serial.print("--------------");
   Serial.println(Serial2.available());
 
@@ -173,6 +190,15 @@ void loop() {
     //    }
 
   }
+
+
+
+  // distance measurements
+  distance1_mm=sensor.readRangeSingleMillimeters();
+  Serial.print("distance: ");
+  Serial.println(distance1_mm,DEC);
+  if (sensor.timeoutOccurred()) { Serial.println(" TIMEOUT"); }
+
   delay(10);
 }
 
