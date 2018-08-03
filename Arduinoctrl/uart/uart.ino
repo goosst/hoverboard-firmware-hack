@@ -1,16 +1,24 @@
 /* initial date: 2 august 2018
    author: goosst
    sketch for arduino due (3.3V based uart etc.)
-   
+
    uart2 from hoverboard is connected to serial 1 from the due
    uart3 from hoverboard is connected to serial 2
-   2 aug 18: added distance measurement with VL53L0X sensor
+   2 aug 18: added distance measurement with VL53L0X 
+   3 aug 18: 
+    * added GS 521 gyroscope reading
+    * added IR remote using LG remote: MKJ40653802 and VS1838b IR receiver
 */
 
 #include <Wire.h>
 #include <VL53L0X.h>
+#include <MPU6050_tockn.h>
+#include <IRremote2.h>
+
 VL53L0X sensor;
 uint16_t distance1_mm;
+
+MPU6050 mpu6050(Wire1);
 
 //uart2
 int16_t speed;
@@ -30,6 +38,10 @@ char inChar = -1;
 int16_t debugdata[12];
 
 
+
+int RECV_PIN = 11;//IR receiver
+IRrecv irrecv(RECV_PIN);
+decode_results results;
 
 
 void setup() {
@@ -56,6 +68,12 @@ void setup() {
   sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodFinalRange, 14);
 
   sensor.setMeasurementTimingBudget(20000); //measuring time us
+
+  Wire1.begin();
+  mpu6050.begin();
+  mpu6050.calcGyroOffsets(true);
+
+  irrecv.enableIRIn(); // Start the receiver
 }
 
 void loop() {
@@ -194,10 +212,44 @@ void loop() {
 
 
   // distance measurements
-  distance1_mm=sensor.readRangeSingleMillimeters();
+  distance1_mm = sensor.readRangeSingleMillimeters();
   Serial.print("distance: ");
-  Serial.println(distance1_mm,DEC);
-  if (sensor.timeoutOccurred()) { Serial.println(" TIMEOUT"); }
+  Serial.println(distance1_mm, DEC);
+  if (sensor.timeoutOccurred()) {
+    Serial.println(" TIMEOUT");
+  }
+
+
+  //gyroscope
+  Serial.print("gyroAngleX : "); Serial.print(mpu6050.getGyroAngleX());
+  Serial.print("\tgyroAngleY : "); Serial.print(mpu6050.getGyroAngleY());
+  Serial.print("\tgyroAngleZ : "); Serial.println(mpu6050.getGyroAngleZ());
+
+  if (irrecv.decode(&results)) {
+    Serial.println(results.value, DEC);
+
+    //values using LG remote: MKJ40653802
+    if (results.value == 551502015)
+    {
+      Serial.println("faster");
+    }
+    else if (results.value == 551534655)
+    {
+      Serial.println("slower");
+    }
+    else if(results.value == 551485695)
+    {
+      Serial.println("turn right");
+    }
+    else if(results.value == 551518335)
+    {
+      Serial.println("turn left");
+    }
+
+
+    irrecv.resume(); // Receive the next value
+  }
+  
 
   delay(10);
 }
