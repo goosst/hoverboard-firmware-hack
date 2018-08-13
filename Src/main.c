@@ -231,13 +231,19 @@ int main(void) {
 	  }
 	  else
 	  {
+		  if(fubar<65500)
+		  {
 		  fubar++;
+		  }
 	  }
 	  cntr_prev_uart2=command.uart_cntr;
 
 	  if(fubar>uart2_timeout)
 	  {
-		  timeout=TIMEOUT;
+		  cmd1=0;
+		  cmd2=0;
+//		  timeout=TIMEOUT;
+
 	  }
 
     #endif

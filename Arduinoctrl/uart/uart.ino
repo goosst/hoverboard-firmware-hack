@@ -8,7 +8,7 @@
    3 aug 18:
       added GS 521 gyroscope reading
       added IR remote using LG remote: MKJ40653802 and VS1838b IR receiver, using this library for the arduino due https://github.com/enternoescape/Arduino-IRremote-Due/blob/master/IRremote2.h
-   4 aug 18: added speed and steer corrections based on IR input, removed usage of delay and replaced by millis()
+   4 aug 18: added speed and steer corrections based on IR input, removed usage of delay and replaced by millis(); mpu6050.calcGyroOffsets(true) should be fixed due to annoying timeout
 */
 
 #include <Wire.h>
@@ -16,19 +16,23 @@
 #include <MPU6050_tockn.h>
 #include <IRremote2.h>
 
+int ledPin = 13;
+bool ledon = false;
+
 VL53L0X sensor;
 uint16_t distance1_mm;
 
 MPU6050 mpu6050(Wire);
 
-//uart2
+//uart2 on serial 1, uart2 is the long cable on closest to the buzzer
 int16_t speed;
 int16_t steer;
 int16_t speedchange;
 uint8_t cntr_uart2;
 uint8_t checksum_uart2;
+uint32_t timeout_uart2 = 0;
 
-// uart3 information:
+// uart3 information on serial 2, uart3 is short cable closes to the red led
 int16_t volt_bat;
 int16_t speed_left;
 int16_t speed_right;
@@ -40,7 +44,7 @@ int16_t debugdata[12];
 
 
 
-int RECV_PIN = 11;//IR receiver
+int RECV_PIN = 11;//IR receiver, seems to work with 3.3 and 5 V
 IRrecv irrecv(RECV_PIN);
 decode_results results;
 
@@ -50,24 +54,29 @@ int taskrate1 = 2;
 unsigned long time_scheduler2 = 0;
 int taskrate2 = 20;
 
+unsigned long time_scheduler3 = 0;
+int taskrate3 = 500;
 
 uint8_t startup;
 
 void setup() {
+  pinMode(ledPin, OUTPUT);
+
   // put your setup code here, to run once:
   Serial1.begin(19200); //uart2
-  Serial.begin(19200); //computer debugging
   Serial2.begin(19200); //uart3
+  Serial.begin(19200); //computer debugging
 
-Serial.print("start program");
-  Serial.println(millis());
+
+  //  Serial.print("start program");
+  //  Serial.println(millis());
   speedchange = 0;
 
   //vl53 settings
   Wire1.begin();
-  Serial.print("step 1:");
-  Serial.println(millis());
-  
+  //  Serial.print("step 1:");
+  //  Serial.println(millis());
+
   sensor.init();
   sensor.setTimeout(500);
   //  sensor.setSignalRateLimit(0.25);
@@ -75,15 +84,15 @@ Serial.print("start program");
   sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodPreRange, 18);
   sensor.setVcselPulsePeriod(VL53L0X::VcselPeriodFinalRange, 14);
   sensor.setMeasurementTimingBudget(20000); //measuring time us
-  Serial.print("step 2:");
-  Serial.println(millis());
-  
+  //  Serial.print("step 2:");
+  //  Serial.println(millis());
+
   //mpu6050, gy-521
   Wire.begin();
   mpu6050.begin();
-    Serial.print("step 3:");
-  Serial.println(millis());
-  
+  //  Serial.print("step 3:");
+  //  Serial.println(millis());
+
   mpu6050.calcGyroOffsets(true); //this is a bloody annoying function if a sensor is not connected, it only times out after ages
 
   irrecv.enableIRIn(); // Start the receiver
@@ -91,85 +100,111 @@ Serial.print("start program");
   steer = 0;
   speed = 0;
 
-    Serial.print("step 4:");
-  Serial.println(millis());
+  //  Serial.print("step 4:");
+  //  Serial.println(millis());
 
   //clear serial buffer uart3
   while (Serial2.available() > 0) {
     Serial2.read();
   }
-  Serial.print("buffer cleared");
+  //  Serial.print("buffer cleared");
 
-  Serial.print("step 5:");
-  Serial.println(millis());
+  //  Serial.print("step 5:");
+  //  Serial.println(millis());
 }
 
 void loop() {
 
-
-
+  //2ms, only works at 2ms if rest of program doesn't take too long to calculate
   if (millis() >= time_scheduler1 + taskrate1)
   {
     time_scheduler1 = millis();
 
+
     //interpret commands IR receiver
     //values using LG remote: MKJ40653802
     if (irrecv.decode(&results)) {
-      Serial.println(results.value, DEC);
+      //      Serial.println(results.value, DEC);
 
 
       if (results.value == 551502015)
       {
         Serial.println("faster");
         speed = speed + 100;
+        timeout_uart2 = 0;
       }
       else if (results.value == 551534655)
       {
         Serial.println("slower");
         speed = speed - 100;
+        timeout_uart2 = 0;
       }
       else if (results.value == 551485695)
       {
         Serial.println("turn right");
         steer = steer + 100;
+        timeout_uart2 = 0;
       }
       else if (results.value == 551518335)
       {
         Serial.println("turn left");
         steer = steer - 100;
+        timeout_uart2 = 0;
       }
       else if (results.value == 551489775)
       {
         Serial.println("turn off");
         steer = 0;
         speed = 0;
+        timeout_uart2 = 0;
       }
 
-      Serial.print("speed ");
-      Serial.println(speed);
 
-      Serial.print("steer ");
-      Serial.println(steer);
 
       irrecv.resume(); // Receive the next value
     }
+    else
+    {
+      timeout_uart2++;
+      uint32_t timeout_cal = 1000;
+      timeout_cal /= taskrate1;
+      Serial.print("timeout remote");
+      Serial.println(timeout_uart2, DEC);
+      //      Serial.println(timeout_cal,DEC);
+
+      if (timeout_uart2 > timeout_cal)
+      {
+        Serial.println("no input received for too long");
+        steer = 0;
+        speed = 0;
+      }
+    }
 
 
-    // some test profile commanding speed and steer
-    //  if (speedchange < 300) {
-    //    speed = 150;
-    //  }
-    //  else {
-    //    speed = 700;
-    //  }
+    Serial.print("speed ");
+    Serial.println(speed);
 
-    //  speedchange++;
-    //  if (speedchange > 800) {
-    //    speedchange = 0;
-    //  }
-    //  //Serial.println(speedchange);
-    //  steer = 0;
+    Serial.print("steer ");
+    Serial.println(steer);
+
   }
+
+
+  // some test profile commanding speed and steer
+  //  if (speedchange < 300) {
+  //    speed = 150;
+  //  }
+  //  else {
+  //    speed = 700;
+  //  }
+
+  //  speedchange++;
+  //  if (speedchange > 800) {
+  //    speedchange = 0;
+  //  }
+  //  //Serial.println(speedchange);
+  //  steer = 0;
+
 
 
   if (millis() >= time_scheduler2 + taskrate2)
@@ -188,7 +223,7 @@ void loop() {
 
 
     // uart3 reading and conversion
-    Serial.println("--------------");
+    //    Serial.println("--------------");
     //  Serial.println(Serial2.available());
 
     bool read_serial = true;
@@ -309,7 +344,27 @@ void loop() {
     }
 
   }
-  //  delay(10);
+
+
+  //blink led to indicate program is running
+  if (millis() >= time_scheduler3 + taskrate3)
+  {
+    time_scheduler3 = millis();
+
+    if (ledon == false)
+    {
+      digitalWrite(ledPin, HIGH);
+      ledon = true;
+      //      Serial.println("pin high");
+    }
+    else
+    {
+      digitalWrite(ledPin, LOW);
+      ledon = false;
+      //      Serial.println("pin low");
+    }
+  }
+
 }
 
 
