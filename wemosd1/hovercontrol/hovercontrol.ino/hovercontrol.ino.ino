@@ -4,7 +4,7 @@
       MPU6050 Triple Axis Gyroscope & Accelerometer. Simple Gyroscope Example.GIT: https://github.com/jarzebski/Arduino-MPU6050
     13 aug 2018
       added esp8266fptserver to readin/readout SPIFFS through FTP: https://github.com/nailbuster/esp8266FTPServer
-      create data folder (ctrl+K), 
+      create data folder (ctrl+K),
       filezille: ftp to IP address port 21, no encryption, 1 simultaneous connection
 
 */
@@ -17,22 +17,59 @@
 #include <MPU6050.h>
 #include <ESP8266FtpServer.h>
 
-const char* ssid = "-";
-const char* password = "-";
+const char* ssid = "telenet-00526";
+const char* password = "Ktcjzzm8CJz5";
+
+// MPU6050 Slave Device Address
+const uint8_t MPU6050SlaveAddress = 0x68;
+// MPU6050 few configuration register addresses
+const uint8_t MPU6050_REGISTER_SMPLRT_DIV   =  0x19;
+const uint8_t MPU6050_REGISTER_USER_CTRL    =  0x6A;
+const uint8_t MPU6050_REGISTER_PWR_MGMT_1   =  0x6B;
+const uint8_t MPU6050_REGISTER_PWR_MGMT_2   =  0x6C;
+const uint8_t MPU6050_REGISTER_CONFIG       =  0x1A;
+const uint8_t MPU6050_REGISTER_GYRO_CONFIG  =  0x1B;
+const uint8_t MPU6050_REGISTER_ACCEL_CONFIG =  0x1C;
+const uint8_t MPU6050_REGISTER_FIFO_EN      =  0x23;
+const uint8_t MPU6050_REGISTER_INT_ENABLE   =  0x38;
+const uint8_t MPU6050_REGISTER_ACCEL_XOUT_H =  0x3B;
+const uint8_t MPU6050_REGISTER_SIGNAL_PATH_RESET  = 0x68;
+
+// struct to read out propoerties MPU6050 sensor
+struct MPU6050_config {
+  float GyroScaleFactor;
+  float AccelScaleFactor;
+};
+struct MPU6050_config mpu6050_1;
+
+struct MPU6050data {
+  double Ax;
+  double Ay;
+  double Az;
+  double T;
+  double Gx;
+  double Gy;
+  double Gz;
+};
+struct MPU6050data kinematics;
+struct MPU6050data MPU_offsets = {0, 0, 0, 0, 0, 0, 0};
 
 
+// ftp server to get recorded data
 FtpServer ftpSrv;
 
-MPU6050 mpu;
 
 bool ledon = false;
 
+float pitch = 0;
+float roll = 0;
+float yaw = 0;
 
 unsigned long time_scheduler2 = 0;
 int taskrate2 = 20;
 
 unsigned long time_scheduler3 = 0;
-int taskrate3 = 500;
+int taskrate3 = 50000;
 
 void setup() {
   Serial.begin(115200);
@@ -98,36 +135,31 @@ void setup() {
 
   pinMode(LED_BUILTIN, OUTPUT);
 
-  //mpu6050, gy-521
-  while (!mpu.begin(MPU6050_SCALE_2000DPS, MPU6050_RANGE_16G))
-  {
-    Serial.println("Could not find a valid MPU6050 sensor, check wiring!");
-    delay(500);
-  }
-  // If you want, you can set gyroscope offsets
-  // mpu.setGyroOffsetX(155);
-  // mpu.setGyroOffsetY(15);
-  // mpu.setGyroOffsetZ(15);
-
-  // Calibrate gyroscope. The calibration must be at rest.
-  // If you don't want calibrate, comment this line.
-  mpu.calibrateGyro();
-
-  // Set threshold sensivty. Default 3.
-  // If you don't want use threshold, comment this line or set 0.
-  mpu.setThreshold(3);
-  // Check settings
-  checkSettings();
-
-
+  //ftp connection with spiffs
   if (SPIFFS.begin())
   {
     Serial.println("SPIFFS opened!");
     ftpSrv.begin("wemosd1", "esp8266");   //username, password for ftp.  set ports in ESP8266FtpServer.h  (default 21, 50009 for PASV)
   }
 
+  Wire.begin();
+
+  MPU6050_Init();
+  uint8_t scale_gyro = 3;
+  uint8_t scale_accel = 0;
+  setScale(MPU6050SlaveAddress, scale_gyro, scale_accel);
+  mpu6050_1 = getMPU6050scales(MPU6050SlaveAddress);
+  Serial.println("calibration sensor, don't move!");
+  delay(1000);
+  MPU_offsets = Read_PhysicalValues(mpu6050_1.GyroScaleFactor, mpu6050_1.AccelScaleFactor, MPU_offsets);
+
+
 
 }
+
+
+
+
 
 void loop() {
   ArduinoOTA.handle();
@@ -137,8 +169,25 @@ void loop() {
   {
     time_scheduler2 = millis();
 
-    Vector rawGyro = mpu.readRawGyro();
-    Vector normGyro = mpu.readNormalizeGyro();
+    kinematics = Read_PhysicalValues(mpu6050_1.GyroScaleFactor, mpu6050_1.AccelScaleFactor, MPU_offsets);
+
+    float timeStep = 0.001 * (float)taskrate2;
+    pitch = pitch + kinematics.Gy * timeStep;
+    roll = roll + kinematics.Gx * timeStep;
+    yaw = yaw + kinematics.Gz * timeStep;
+
+    Serial.print("pitch: ");
+    Serial.print(pitch,DEC);
+
+    
+    Serial.print("roll: ");
+    Serial.print(roll,DEC);
+
+    
+    Serial.print("yaw: ");
+    Serial.print(yaw,DEC);
+    
+    Serial.println();
 
   }
 
@@ -197,41 +246,200 @@ void loop() {
 }
 
 
-
-void checkSettings()
+struct MPU6050data Read_PhysicalValues(float GyroScaleFactor, float AccelScaleFactor, MPU6050data offsets)
 {
-  Serial.println();
+  //read out sensor and return data in deg/s and /g
+  struct MPU6050data_raw {
+    int16_t Ax;
+    int16_t Ay;
+    int16_t Az;
+    int16_t T;
+    int16_t Gx;
+    int16_t Gy;
+    int16_t Gz;
+  };
 
-  Serial.print(" * Sleep Mode:        ");
-  Serial.println(mpu.getSleepEnabled() ? "Enabled" : "Disabled");
+  struct MPU6050data_raw kin ;
+  struct MPU6050data w;
 
-  Serial.print(" * Clock Source:      ");
-  switch (mpu.getClockSource())
-  {
-    case MPU6050_CLOCK_KEEP_RESET:     Serial.println("Stops the clock and keeps the timing generator in reset"); break;
-    case MPU6050_CLOCK_EXTERNAL_19MHZ: Serial.println("PLL with external 19.2MHz reference"); break;
-    case MPU6050_CLOCK_EXTERNAL_32KHZ: Serial.println("PLL with external 32.768kHz reference"); break;
-    case MPU6050_CLOCK_PLL_ZGYRO:      Serial.println("PLL with Z axis gyroscope reference"); break;
-    case MPU6050_CLOCK_PLL_YGYRO:      Serial.println("PLL with Y axis gyroscope reference"); break;
-    case MPU6050_CLOCK_PLL_XGYRO:      Serial.println("PLL with X axis gyroscope reference"); break;
-    case MPU6050_CLOCK_INTERNAL_8MHZ:  Serial.println("Internal 8MHz oscillator"); break;
-  }
+  Wire.beginTransmission(MPU6050SlaveAddress);
+  Wire.write(MPU6050_REGISTER_ACCEL_XOUT_H);
+  Wire.endTransmission();
+  Wire.requestFrom(MPU6050SlaveAddress, (uint8_t)14);
+  kin.Ax = (((int16_t)Wire.read() << 8) | Wire.read());
+  kin.Ay = (((int16_t)Wire.read() << 8) | Wire.read());
+  kin.Az = (((int16_t)Wire.read() << 8) | Wire.read());
+  kin.T = (((int16_t)Wire.read() << 8) | Wire.read());
+  kin.Gx = (((int16_t)Wire.read() << 8) | Wire.read());
+  kin.Gy = (((int16_t)Wire.read() << 8) | Wire.read());
+  kin.Gz = (((int16_t)Wire.read() << 8) | Wire.read());
 
-  Serial.print(" * Gyroscope:         ");
-  switch (mpu.getScale())
-  {
-    case MPU6050_SCALE_2000DPS:        Serial.println("2000 dps"); break;
-    case MPU6050_SCALE_1000DPS:        Serial.println("1000 dps"); break;
-    case MPU6050_SCALE_500DPS:         Serial.println("500 dps"); break;
-    case MPU6050_SCALE_250DPS:         Serial.println("250 dps"); break;
-  }
 
-  Serial.print(" * Gyroscope offsets: ");
-  Serial.print(mpu.getGyroOffsetX());
-  Serial.print(" / ");
-  Serial.print(mpu.getGyroOffsetY());
-  Serial.print(" / ");
-  Serial.println(mpu.getGyroOffsetZ());
+  //divide each with their sensitivity scale factor and correct for offsets
+  w.Ax = kin.Ax / AccelScaleFactor - offsets.Ax;
+  w.Ay = kin.Ay / AccelScaleFactor - offsets.Ay;
+  w.Az = kin.Az / AccelScaleFactor - offsets.Az;
+  w.T = kin.T / 340 + 36.53; //temperature formula
+  w.Gx = kin.Gx / GyroScaleFactor - offsets.Gx;
+  w.Gy = kin.Gy / GyroScaleFactor - offsets.Gy;
+  w.Gz = kin.Gz / GyroScaleFactor - offsets.Gz;
 
-  Serial.println();
+//      Serial.println("raw values");
+//    Serial.print("Ax: "); Serial.print(kin.Ax);
+//    Serial.print(" Ay: "); Serial.print(kin.Ay);
+//    Serial.print(" Az: "); Serial.print(kin.Az);
+//    Serial.print(" T: "); Serial.print(kin.T);
+//    Serial.print(" Gx: "); Serial.print(kin.Gx);
+//    Serial.print(" Gy: "); Serial.print(kin.Gy);
+//    Serial.print(" Gz: "); Serial.println(kin.Gz);
+  
+//    Serial.println("converted values");
+    Serial.print("Ax: "); Serial.print(w.Ax);
+    Serial.print(" Ay: "); Serial.print(w.Ay);
+    Serial.print(" Az: "); Serial.print(w.Az);
+    Serial.print(" T: "); Serial.print(w.T);
+    Serial.print(" Gx: "); Serial.print(w.Gx);
+    Serial.print(" Gy: "); Serial.print(w.Gy);
+    Serial.print(" Gz: "); Serial.print(w.Gz);
+
+  return w;
+
 }
+
+
+// read all 14 register
+//struct MPU6050data_raw Read_RawValue(uint8_t deviceAddress, uint8_t regAddress) {
+//  struct MPU6050data_raw kin;
+//
+//
+//
+//
+//  return kin;
+//
+//}
+
+
+void MPU6050_Init() {
+  //configure MPU6050
+  delay(150);
+
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SMPLRT_DIV, 0x07);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_PWR_MGMT_1, 0x01);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_PWR_MGMT_2, 0x00);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_CONFIG, 0x00);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_GYRO_CONFIG, 0x00);//set +/-250 degree/second full scale
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_CONFIG, 0x00);// set +/- 2g full scale
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_FIFO_EN, 0x00);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_INT_ENABLE, 0x01);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SIGNAL_PATH_RESET, 0x00);
+  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_USER_CTRL, 0x00);
+
+  delay(100);
+
+}
+
+
+void setScale(byte addr, uint8_t scale_gyro, uint8_t scale_acc)
+// set scaling factors for gyro and accelerometer reading
+{
+
+  uint8_t value;
+  if (scale_gyro == 0)
+  {
+    value = 0x00;
+    Serial.println("scale set to 250 deg/s");
+  }
+  else if (scale_gyro == 3) {
+    value = 0x18;
+    Serial.println("scale set to 2000 deg/s");
+  }
+  else
+  {
+    value = 0x00;
+    Serial.println("scale set to 250 deg/s");
+  }
+  Wire.beginTransmission(MPU6050SlaveAddress);
+  Wire.write(MPU6050_REGISTER_GYRO_CONFIG);
+  Wire.write(value);
+  Wire.endTransmission();
+  delay(200);
+
+
+  //  if (scale_acc == 0)
+  //  {
+  //    value = 0x00;
+  //    Serial.println("scale set to 2g");
+  //  }
+  //  else if (scale_acc == 3) {
+  //    value = 0x18;
+  //    Serial.println("scale set to 16g");
+  //  }
+  //  else
+  //  {
+  //    value = 0x00;
+  //    Serial.println("scale set to 2 deg/s");
+  //  }
+  //  Wire.beginTransmission(MPU6050SlaveAddress);
+  //  Wire.write(MPU6050_REGISTER_ACCEL_CONFIG);
+  //  Wire.write(value);
+  //  Wire.endTransmission();
+  delay(200);
+
+}
+
+
+struct MPU6050_config getMPU6050scales(byte addr) {
+  Wire.beginTransmission(addr);
+  //  Wire.write(0x1B); // starting with register 0x3B (ACCEL_XOUT_H)
+  Wire.write(MPU6050_REGISTER_GYRO_CONFIG);
+  Wire.endTransmission(false);
+  Wire.requestFrom(addr, 2, true); // request a total of 14 registers
+  uint8_t Gyro = (Wire.read() & (bit(3) | bit(4))) >> 3;
+  uint8_t Accl = (Wire.read() & (bit(3) | bit(4))) >> 3;
+
+  float GyroScaleFactor;
+  float AccelScaleFactor;
+
+  if (Gyro == 0)
+  {
+    GyroScaleFactor = 131.0;
+  }
+  else if (Gyro == 3)
+  {
+    GyroScaleFactor = 16.4;
+  }
+
+  if (Accl == 0)
+  {
+    AccelScaleFactor = 16384;
+  }
+  else if (Accl == 3)
+  {
+    AccelScaleFactor = 2048;
+  }
+
+  //  Serial.println(GyroScaleFactor, DEC);
+  //  Serial.println(AccelScaleFactor, DEC);
+
+  MPU6050_config r = {GyroScaleFactor, AccelScaleFactor};
+  return r;
+
+  //  const float MPU_ACCL_2_SCALE = 16384.0;
+  //const float MPU_ACCL_4_SCALE = 8192.0;
+  //const float MPU_ACCL_8_SCALE = 4096.0;
+  //const float MPU_ACCL_16_SCALE = 2048.0;
+  //  const float MPU_GYRO_250_SCALE = 131.0;
+  //const float MPU_GYRO_500_SCALE = 65.5;
+  //const float MPU_GYRO_1000_SCALE = 32.8;
+  //const float MPU_GYRO_2000_SCALE = 16.4;
+
+}
+
+void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data) {
+  Wire.beginTransmission(deviceAddress);
+  Wire.write(regAddress);
+  Wire.write(data);
+  Wire.endTransmission();
+}
+
+
