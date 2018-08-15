@@ -1,12 +1,12 @@
 /* hoverboard control from wemos d1 r2 (over wifi)
     12 aug 2018
-      over the air update
+      added over the air update
       MPU6050 Triple Axis Gyroscope & Accelerometer. Simple Gyroscope Example.GIT: https://github.com/jarzebski/Arduino-MPU6050
     13 aug 2018
       added esp8266fptserver to readin/readout SPIFFS through FTP: https://github.com/nailbuster/esp8266FTPServer
-      create data folder (ctrl+K),
-      filezille: ftp to IP address port 21, no encryption, 1 simultaneous connection
-
+      create folder "data" (ctrl+K), filezille: ftp to IP address port 21, no encryption, 1 simultaneous connection
+    15 aug 2018:
+      redid MPU6050 reading since default library gave bullshit physical values
 */
 
 #include <ESP8266WiFi.h>
@@ -14,11 +14,10 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <Wire.h>
-#include <MPU6050.h>
 #include <ESP8266FtpServer.h>
 
-const char* ssid = "telenet-00526";
-const char* password = "Ktcjzzm8CJz5";
+const char* ssid = "**";
+const char* password = "**";
 
 // MPU6050 Slave Device Address
 const uint8_t MPU6050SlaveAddress = 0x68;
@@ -54,16 +53,33 @@ struct MPU6050data {
 struct MPU6050data kinematics;
 struct MPU6050data MPU_offsets = {0, 0, 0, 0, 0, 0, 0};
 
+float pitch = 0;
+float roll = 0;
+float yaw = 0;
 
 // ftp server to get recorded data
 FtpServer ftpSrv;
 
+//IR receiver, seems to work with 3.3 and 5 V
+int RECV_PIN = 11;
+IRrecv irrecv(RECV_PIN);
+decode_results results;
+
 
 bool ledon = false;
 
-float pitch = 0;
-float roll = 0;
-float yaw = 0;
+
+//uart2, uart2 is the long cable closest to the buzzer
+int16_t speed;
+int16_t steer;
+int16_t speedchange;
+uint8_t cntr_uart2;
+uint8_t checksum_uart2;
+uint32_t timeout_uart2 = 0;
+
+// different task rates
+unsigned long time_scheduler1 = 0;
+int taskrate1 = 2;
 
 unsigned long time_scheduler2 = 0;
 int taskrate2 = 20;
@@ -72,8 +88,8 @@ unsigned long time_scheduler3 = 0;
 int taskrate3 = 50000;
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println("Booting");
+  Serial.begin(19200);
+
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
@@ -153,17 +169,88 @@ void setup() {
   delay(1000);
   MPU_offsets = Read_PhysicalValues(mpu6050_1.GyroScaleFactor, mpu6050_1.AccelScaleFactor, MPU_offsets);
 
-
+  irrecv.enableIRIn(); // Start the receiver
+  steer = 0;
+  speed = 0;
 
 }
-
-
-
 
 
 void loop() {
   ArduinoOTA.handle();
   ftpSrv.handleFTP();
+
+  //2ms, only works at 2ms if rest of program doesn't take too long to calculate
+  if (millis() >= time_scheduler1 + taskrate1)
+  {
+    time_scheduler1 = millis();
+    //interpret commands IR receiver
+    //values using LG remote: MKJ40653802
+    if (irrecv.decode(&results)) {
+      //      Serial.println(results.value, DEC);
+
+      if (results.value == 551502015)
+      {
+        Serial.println("faster");
+        speed = speed + 100;
+        timeout_uart2 = 0;
+      }
+      else if (results.value == 551534655)
+      {
+        Serial.println("slower");
+        speed = speed - 100;
+        timeout_uart2 = 0;
+      }
+      else if (results.value == 551485695)
+      {
+        Serial.println("turn right");
+        steer = steer + 100;
+        timeout_uart2 = 0;
+      }
+      else if (results.value == 551518335)
+      {
+        Serial.println("turn left");
+        steer = steer - 100;
+        timeout_uart2 = 0;
+      }
+      else if (results.value == 551489775)
+      {
+        Serial.println("turn off");
+        steer = 0;
+        speed = 0;
+        timeout_uart2 = 0;
+      }
+
+
+
+      irrecv.resume(); // Receive the next value
+    }
+    else
+    {
+      timeout_uart2++;
+      uint32_t timeout_cal = 1000;
+      timeout_cal /= taskrate1;
+      Serial.print("timeout remote");
+      Serial.println(timeout_uart2, DEC);
+      //      Serial.println(timeout_cal,DEC);
+
+      if (timeout_uart2 > timeout_cal)
+      {
+        Serial.println("no input received for too long");
+        steer = 0;
+        speed = 0;
+      }
+    }
+
+
+    Serial.print("speed ");
+    Serial.println(speed);
+
+    Serial.print("steer ");
+    Serial.println(steer);
+
+  }
+
 
   if (millis() >= time_scheduler2 + taskrate2)
   {
@@ -177,16 +264,16 @@ void loop() {
     yaw = yaw + kinematics.Gz * timeStep;
 
     Serial.print("pitch: ");
-    Serial.print(pitch,DEC);
+    Serial.print(pitch, DEC);
 
-    
+
     Serial.print("roll: ");
-    Serial.print(roll,DEC);
+    Serial.print(roll, DEC);
 
-    
+
     Serial.print("yaw: ");
-    Serial.print(yaw,DEC);
-    
+    Serial.print(yaw, DEC);
+
     Serial.println();
 
   }
@@ -222,8 +309,6 @@ void loop() {
       f.print("Millis() : ");
       f.println(millis());
       Serial.println(millis());
-
-      delay(3);
     }
 
     f.close();
@@ -246,9 +331,16 @@ void loop() {
 }
 
 
+
+
+
+
+// all helper functions
+
+
 struct MPU6050data Read_PhysicalValues(float GyroScaleFactor, float AccelScaleFactor, MPU6050data offsets)
 {
-  //read out sensor and return data in deg/s and /g
+  //read out MPU6050 sensor and return gyroscope data in deg/s; accelerometer in g
   struct MPU6050data_raw {
     int16_t Ax;
     int16_t Ay;
@@ -284,44 +376,31 @@ struct MPU6050data Read_PhysicalValues(float GyroScaleFactor, float AccelScaleFa
   w.Gy = kin.Gy / GyroScaleFactor - offsets.Gy;
   w.Gz = kin.Gz / GyroScaleFactor - offsets.Gz;
 
-//      Serial.println("raw values");
-//    Serial.print("Ax: "); Serial.print(kin.Ax);
-//    Serial.print(" Ay: "); Serial.print(kin.Ay);
-//    Serial.print(" Az: "); Serial.print(kin.Az);
-//    Serial.print(" T: "); Serial.print(kin.T);
-//    Serial.print(" Gx: "); Serial.print(kin.Gx);
-//    Serial.print(" Gy: "); Serial.print(kin.Gy);
-//    Serial.print(" Gz: "); Serial.println(kin.Gz);
-  
-//    Serial.println("converted values");
-    Serial.print("Ax: "); Serial.print(w.Ax);
-    Serial.print(" Ay: "); Serial.print(w.Ay);
-    Serial.print(" Az: "); Serial.print(w.Az);
-    Serial.print(" T: "); Serial.print(w.T);
-    Serial.print(" Gx: "); Serial.print(w.Gx);
-    Serial.print(" Gy: "); Serial.print(w.Gy);
-    Serial.print(" Gz: "); Serial.print(w.Gz);
+  //      Serial.println("raw values");
+  //    Serial.print("Ax: "); Serial.print(kin.Ax);
+  //    Serial.print(" Ay: "); Serial.print(kin.Ay);
+  //    Serial.print(" Az: "); Serial.print(kin.Az);
+  //    Serial.print(" T: "); Serial.print(kin.T);
+  //    Serial.print(" Gx: "); Serial.print(kin.Gx);
+  //    Serial.print(" Gy: "); Serial.print(kin.Gy);
+  //    Serial.print(" Gz: "); Serial.println(kin.Gz);
+
+  //    Serial.println("converted values");
+  Serial.print("Ax: "); Serial.print(w.Ax);
+  Serial.print(" Ay: "); Serial.print(w.Ay);
+  Serial.print(" Az: "); Serial.print(w.Az);
+  Serial.print(" T: "); Serial.print(w.T);
+  Serial.print(" Gx: "); Serial.print(w.Gx);
+  Serial.print(" Gy: "); Serial.print(w.Gy);
+  Serial.print(" Gz: "); Serial.print(w.Gz);
 
   return w;
 
 }
 
-
-// read all 14 register
-//struct MPU6050data_raw Read_RawValue(uint8_t deviceAddress, uint8_t regAddress) {
-//  struct MPU6050data_raw kin;
-//
-//
-//
-//
-//  return kin;
-//
-//}
-
-
 void MPU6050_Init() {
   //configure MPU6050
-  delay(150);
+  delay(100);
 
   I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SMPLRT_DIV, 0x07);
   I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_PWR_MGMT_1, 0x01);
@@ -365,25 +444,25 @@ void setScale(byte addr, uint8_t scale_gyro, uint8_t scale_acc)
   delay(200);
 
 
-  //  if (scale_acc == 0)
-  //  {
-  //    value = 0x00;
-  //    Serial.println("scale set to 2g");
-  //  }
-  //  else if (scale_acc == 3) {
-  //    value = 0x18;
-  //    Serial.println("scale set to 16g");
-  //  }
-  //  else
-  //  {
-  //    value = 0x00;
-  //    Serial.println("scale set to 2 deg/s");
-  //  }
-  //  Wire.beginTransmission(MPU6050SlaveAddress);
-  //  Wire.write(MPU6050_REGISTER_ACCEL_CONFIG);
-  //  Wire.write(value);
-  //  Wire.endTransmission();
-  delay(200);
+  if (scale_acc == 0)
+  {
+    value = 0x00;
+    Serial.println("scale set to 2g");
+  }
+  else if (scale_acc == 3) {
+    value = 0x18;
+    Serial.println("scale set to 16g");
+  }
+  else
+  {
+    value = 0x00;
+    Serial.println("scale set to 2 deg/s");
+  }
+  Wire.beginTransmission(MPU6050SlaveAddress);
+  Wire.write(MPU6050_REGISTER_ACCEL_CONFIG);
+  Wire.write(value);
+  Wire.endTransmission();
+  delay(100);
 
 }
 
