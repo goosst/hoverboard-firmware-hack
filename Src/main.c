@@ -310,7 +310,11 @@ int main(void) {
     	  buff_cntr=0;
       }
 
-      consoleScope();
+      if(buff_cntr % 20 ==0)
+      {
+    	  consoleScope();
+      }
+
     }
 
 
