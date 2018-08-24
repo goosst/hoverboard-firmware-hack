@@ -282,7 +282,7 @@ int main(void) {
     lastSpeedR = speedR;
 
 
-    if (inactivity_timeout_counter % 25 == 0) {
+//    if (inactivity_timeout_counter % 25 == 0) {
       // ####### CALC BOARD TEMPERATURE #######
       board_temp_adc_filtered = board_temp_adc_filtered * 0.99 + (float)adc_buffer.temp * 0.01;
       board_temp_deg_c = ((float)TEMP_CAL_HIGH_DEG_C - (float)TEMP_CAL_LOW_DEG_C) / ((float)TEMP_CAL_HIGH_ADC - (float)TEMP_CAL_LOW_ADC) * (board_temp_adc_filtered - (float)TEMP_CAL_LOW_ADC) + (float)TEMP_CAL_LOW_DEG_C;
@@ -299,9 +299,9 @@ int main(void) {
       setScopeChannel(6, (int)board_temp_adc_filtered);  // 7: for board temperature calibration
       setScopeChannel(7, (int)board_temp_deg_c);  // 8: for verifying board temperature calibration
 
-      setScopeChannel(5, (int)fubar);
-      setScopeChannel(2, (int)command.steer);
-      setScopeChannel(3, (int)command.speed);
+      setScopeChannel(5, (int)adc_buffer.batt1);
+      setScopeChannel(2, (int)speedR);
+      setScopeChannel(3, (int)speedL);
 
       setScopeChannel(0,buff_cntr);
       buff_cntr++;
@@ -315,7 +315,7 @@ int main(void) {
     	  consoleScope();
       }
 
-    }
+//    }
 
 
     // ####### POWEROFF BY POWER-BUTTON #######
@@ -348,9 +348,12 @@ int main(void) {
 
 
     // ####### INACTIVITY TIMEOUT #######
-    if (abs(speedL) > 50 || abs(speedR) > 50) {
+    if (abs(speedL) > 50 || abs(speedR) > 50)
+    {
       inactivity_timeout_counter = 0;
-    } else {
+    }
+    else
+    {
       inactivity_timeout_counter ++;
     }
     if (inactivity_timeout_counter > (INACTIVITY_TIMEOUT * 60 * 1000) / (DELAY_IN_MAIN_LOOP + 1)) {  // rest of main loop needs maybe 1ms
